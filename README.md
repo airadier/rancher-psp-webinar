@@ -1,6 +1,6 @@
 # PSP Demo
 
-## Prepare permissive-binding
+## 00 - Prepare permissive-binding
 
 ```
 kubectl create clusterrolebinding permissive-binding \
@@ -11,42 +11,17 @@ kubectl create clusterrolebinding permissive-binding \
   --group=system:authenticated
 ```
 
-## Demo: No PSP enabled - danger
+## Demo 01: No PSP enabled - danger
 
 Folder: 01_no_psp_enabled
 
 ```
-$ bat pod-privileged.yaml
-$ kubectl create -f pod-privileged.yaml
-$ kubectl attach -ti pod sudo-test
+$ bat deploy-privileged.yaml
+$ kubectl apply -f deploy-privileged.yaml
+$ kubectl attach -ti deploy privileged-deploy
 ```
 
-One-liner:
-
-```
-$ kubectl run no-psp-test --restart=Never -it \
-    --image overriden --overrides '
-  "spec": {
-    "hostPID": true,
-    "hostNetwork": true,
-    "containers": [
-      {
-        "name": "busybox",
-        "image": "alpine:3.7",
-        "command": ["/bin/sh"],
-        "stdin": true,
-        "tty": true,
-        "securityContext": {
-          "privileged": true
-        }
-      }
-    ]
-  }
-}' --rm --attach
-```
-
-We show we are in a chroot, `docker ps`does not work, but `ps -ef` or `ifconfig` show host PIDs and network interfaces, so we can do:
-
+We are in a container, but with our *own* mount namespace. `docker ps`does not work, but `ps -ef` or `ifconfig` show host PIDs and network interfaces, so we can do:
 
 ```
 # nsenter --mount=/proc/1/ns/mnt -- /bin/bash
@@ -54,48 +29,72 @@ We show we are in a chroot, `docker ps`does not work, but `ps -ef` or `ifconfig`
 
 Now we are in the host as root. We can check /etc/kubernetes/manifests, docker ps, whatever
 
-## Demo: Enable PSP + naive example
+Let's delete the pod before going on:
+
+```
+$ kubectl delete  -f deploy-privileged.yaml --grace-period=0 --force=true
+```
+
+## Demo 02: Enable PSP + naive example
 
 Folder: 02_psp_enabled
+
+### Enable PSP
 
 Let's enable PSP
 
 ```
 $ minikube ssh
-$ sudo su
-$ cd /etc/kubernetes/manifests
-$ vi kube-apiserver.yaml
+$ sudo vi /etc/kubernetes/manifests/kube-apiserver.yaml
 ...  Add PodSecurityPolicy at the end of --enable-admission-plugins option
 ```
 
 Now let's try to create a standard Pod:
 
+### Non-privileged pod
+
 ```
-$ bat pod-not-privileged.yaml
-$ kubectl create -f pod-not-privileged.yaml
-Error from server (Forbidden): error when creating "pod-not-privileged.yaml": pods "not-privileged" is forbidden: no providers available to validate pod request
+$ bat deploy-not-privileged.yaml
+$ kubectl apply -f deploy-not-privileged.yaml
 ```
 
-We have not created any PSP yet, let's create one:
+The pod cannot be created, check the deploy and the replicaset events:
+
+```
+$ kubectl describe deploy not-privileged-deploy
+...
+  Normal  ScalingReplicaSet  53s   deployment-controller  Scaled up replica set not-privileged-deploy-684696d5b5 to 1
+
+$ kubectl describe rs not-privileged-deploy-684696d5b5
+...
+  Warning  FailedCreate  16s (x15 over 98s)  replicaset-controller  Error creating: pods "not-privileged-deploy-684696d5b5-" is forbidden: no providers available to validate pod request
+
+```
+
+The reason is we have not created any PSP yet, let's create one:
 
 ```
 $ bat psp-restricted.yaml
-$ kubectl create -f psp-restricted.yaml
+$ kubectl apply -f psp-restricted.yaml
 ```
 
-Now creating the non-privileged pod will work:
-```
-$ kubectl create -f pod-not-privileged.yaml
-pod/not-privileged created
-```
+Now if we wait a bit, the pod will be created (we can delete/create the deploy)
 
+### Privileged pod
 
 However, trying to create the privileged pod fails:
 
 ```
-$ bat pod-privileged.yaml
-$ kubectl create -f pod-privileged.yaml
-Error from server (Forbidden): error when creating "pod-privileged.yaml": pods "sudo-test" is forbidden: unable to validate against any pod security policy: [spec.securityContext.hostNetwork: Invalid value: true: Host network is not allowed to be used spec.securityContext.hostPID: Invalid value: true: Host PID is not allowed to be used spec.containers[0].securityContext.privileged: Invalid value: true: Privileged containers are not allowed]
+$ bat deploy-privileged.yaml
+$ kubectl apply -f deploy-privileged.yaml
+```
+
+and again, if we check the status of the replicaset:
+
+```
+$ kubectl describe rs privileged-deploy-7569b9969d
+...
+  Warning  FailedCreate  2s (x12 over 13s)  replicaset-controller  Error creating: pods "privileged-deploy-7569b9969d-" is forbidden: unable to validate against any pod security policy: [spec.securityContext.hostNetwork: Invalid value: true: Host network is not allowed to be used spec.securityContext.hostPID: Invalid value: true: Host PID is not allowed to be used spec.containers[0].securityContext.privileged: Invalid value: true: Privileged containers are not allowed]
 ```
 
 No existing PSPs allow for "hostPID", "hostNetwork" or "privileged"
@@ -104,41 +103,27 @@ Now, let's create a "privileged" PSP:
 
 ```
 $ bat psp-privileged.yaml
-$ kubectl create -f psp-privileged.yaml
+$ kubectl apply -f psp-privileged.yaml
 ```
 
-And now we can create the privileged pod:
-
-```
-$ bat pod-privileged.yaml
-$ kubectl create -f pod-privileged.yaml
-$ kubectl attach -ti pod sudo-test
-```
-
-that now succeeds, as there is a PSP allowing hostPID, hostNetwork and privileged.
+Now if we wait a bit, the pod will be created (we can delete/create the deploy)
 
 If we describe the pod, we know which PSP was applied from the annotations:
 
 ```
-$ kubectl describe po sudo-test
-...
+$ kubectl describe po privileged-deploy-7569b9969d-78j75 | grep psp
 Annotations:  kubernetes.io/psp: privileged
-...
-$ kubectl describe po not-privileged
-...
+$ kubectl describe po not-privileged-deploy-684696d5b5-hbmn7 | grep psp
 Annotations:  kubernetes.io/psp: restricted
-...
 ```
 
 However, what if we destroy and create the not-privileged pod again?
 
 ```
-$ kubectl delete po not-privileged
-$ kubectl create  -f pod-not-privileged.yaml
-$ kubectl describe po not-privileged
+$ kubectl delete po not-privileged-deploy-684696d5b5-hbmn7 --grace-period=0 --force=true
 ...
+$ kubectl describe po not-privileged-deploy-684696d5b5-sn9tf | grep psp
 Annotations:  kubernetes.io/psp: privileged
-...
 ```
 Wow! What happened? In short: when there are multiple PSPs allowing a Pod, the first one (under certain criteria) will be applied.
 
@@ -147,10 +132,11 @@ But what are the rules? And how do we map which pods can use which PSPs? Let's m
 Let's remove the pods before moving on:
 
 ```
-$ kubectl delete po not-privileged sudo-test
+$ kubectl delete -f deploy-not-privileged.yaml
+$ kubectl delete -f deploy-privileged.yaml
 ```
 
-## Demo: PSPs with RBAC
+## Demo 03: PSPs with RBAC
 
 Folder: 03_rbac
 
@@ -177,84 +163,21 @@ Let's remove it and see what happens:
 
 ```
 $ kubectl delete clusterrolebinding permissive-binding
-$ kubectl -n kube-system delete po kube-apiserver-minikube
-$ kubectl -n kube-system get po
 ```
 
-Now even kube-apiserver-minikube is unable to start. If we check kubelet logs, we would see something like:
+### Non-privileged pod
+
+And now let's try to create a non-privileged pod:
 
 ```
-$ sudo systemctl status kubelet
-...
-Mar 03 11:35:04 sudo--minikube kubelet[2373]: E0303 11:35:04.087071    2373 kubelet.go:1664] Failed creating a mirror pod for "kube-apiserver-minikube_kube-system(8c8ab4bb9206ea9479beced12bca99dc)": pods "kube-apiserver-minikube" is forbidden: unable to validate against
-any pod security policy: []
-...
-```
-
-Logs show that kube-apiserver-minikube pod in kube-system is not able to start after we enabled PSPs. 
-
-Here is we you need to start being careful.
-
-To fix this, we need to allow the user system:node:minikube (the user which kubelet authenticates as) to use privileged PSP
-
-```
-$ bat role-use-privileged-psp.yaml
-$ kubectl create -f role-use-privileged-psp.yaml
-$ bat rolebinding-privileged-role-bind.yaml
-$ kubectl create -f rolebinding-privileged-role-bind.yaml
-```
-
-Ok, and now apiserver works, but creating our non-privileged pod should fail, right? As it does not have access to any PSP:
-
-```
-$ kubectl create -f pod-not-privileged.yaml
-```
-
-But it works! why?
-
-In our kubeconfig, we are using Certificate Authentication for minikube:
-
-```
-...
-users:
-- name: minikube
-  user:
-    client-certificate: /Users/airadier/.minikube/client.crt
-...
-```
-
-and if we check the certificate Subject:
-
-```
-$ cat /Users/airadier/.minikube/client.crt | openssl x509 -text                                                                                               (⎈ minikube|default)
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number: 2 (0x2)
-    Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN=minikubeCA
-        Validity
-            Not Before: Feb 29 20:43:38 2020 GMT
-            Not After : Mar  1 20:43:38 2021 GMT
-        Subject: O=system:masters, CN=minikube-user
-        Subject Public Key Info:
-...
-```
-
-so we are using user *minikube-user* in group *system:masters* which is binded to cluster-admin ClusterRole via cluster-admin ClusterRoleBinding, allowing us to USE any PSP on creation.
-
-Let's do it more real by creating a deploy for the Pod:
-
-```
-$ kubectl delete po not-privileged
 $ bat deploy-not-privileged.yaml
-$ kubectl create -f deploy-not-privileged.yaml
+$ kubectl apply -f deploy-not-privileged.yaml
 ```
 
 Now the pod is not being created... let's describe the deployment, and the replicaset that the deployment creates:
 
 ```
-$ k describe rs not-privileged-deploy-684696d5b5                                                                                                              (⎈ minikube|default)
+$ k describe rs not-privileged-deploy-684696d5b5
 Name:           not-privileged-deploy-684696d5b5
 Namespace:      default
 ...
@@ -264,39 +187,43 @@ Events:
   Warning  FailedCreate  34s (x15 over 116s)  replicaset-controller  Error creating: pods "not-privileged-deploy-684696d5b5-" is forbidden: unable to validate against any pod security policy: []
 ```
 
-So let's create a clusterrolebinding to allow any service account to use the "not-privileged" PSP:
-
-```
-$ bat sa-privileged.yaml
-$ kubectl create -f sa-privileged.yaml
-$ bat deploy-privileged-with-sa.yaml
-$ kubectl create -f deploy-privileged-with-sa.yaml
-```
-
+So let's create a ClusterRole to allow USE verb on the the "restricted" PSP:
 
 ```
 $ bat clusterrole-use-restricted.yaml
-$ kubectl create -f clusterrole-use-restricted.yaml
+$ kubectl apply -f clusterrole-use-restricted.yaml
 ```
 
-and then create a clusterrolebinding to allow restricted (not privileged) pods by default using any service account:
+and another ClusterRole to allow USE verb on the "privileged" PSP:
+
+```
+$ bat clusterrole-use-privileged.yaml
+$ kubectl apply -f clusterrole-use-privileged.yaml
+```
+
+For the moment, let's create a ClusterRoleBinding to allow restricted (not privileged) pods by default using any service account:
 
 ```
 $ bat clusterrolebinding-restricted-role-bind.yaml
-$ kubectl create -f clusterrolebinding-restricted-role-bind.yaml
+$ kubectl apply -f clusterrolebinding-restricted-role-bind.yaml
 ```
 
-Now our deployment should work, but trying to create a privileged deployment shouldn't:
+Now our deployment should work
+
+### Privileged pod
+
+Trying to create a privileged deployment shouldn't work:
 
 ```
 $ bat deploy-privileged.yaml
-$ kubectl create -f deploy-privileged.yaml
+$ kubectl apply -f deploy-privileged.yaml
 ```
 
-the replicaset complains:
+the deploy is unable to spawn the pod, and the replica-set that it created complains:
+
 
 ```
-$ kubectl describe rs privileged-deploy-7569b9969d                                                                                                                  (⎈ minikube|default)
+$ kubectl describe rs privileged-deploy-7569b9969d
 Name:           privileged-deploy-7569b9969d
 Namespace:      default
 Selector:       app=privileged-deploy,pod-template-hash=7569b9969d
@@ -308,13 +235,19 @@ Events:
   Warning  FailedCreate  4s (x14 over 45s)  replicaset-controller  Error creating: pods "privileged-deploy-7569b9969d-" is forbidden: unable to validate against any pod security policy: [spec.securityContext.hostNetwork: Invalid value: true: Host network is not allowed to be used spec.securityContext.hostPID: Invalid value: true: Host PID is not allowed to be used spec.containers[0].securityContext.privileged: Invalid value: true: Privileged containers are not allowed]
 ```
 
-unless we explicitely allow. We will create a special serviceaccount "privileged-sa" and create a rolebinding for that account
+The existing PSP (restricted) does not allow hostPID, hostNetwork or privileged.
+
+We will create a special service account "privileged-sa" and create a rolebinding for that account
 
 ```
-$ bat clusterrole-user-privileged.yaml
-$ kubectl create -f clusterrole-user-privileged.yaml
-$ bat rolebinding-privileged-role-bind-default-ns.yaml
-$ kubectl create -f rolebinding-privileged-role-bind-default-ns.yaml
+$ bat sa-privileged.yaml
+$ kubectl apply -f sa-privileged.yaml
+$ bat deploy-privileged-with-sa.yaml
+$ kubectl apply -f deploy-privileged-with-sa.yaml
+$ bat rolebinding-privileged.yaml
+$ kubectl apply -f rolebinding-privileged.yaml
 ```
 
 And now our deployment should work
+
+## Demo 04: Sysdig Secure
