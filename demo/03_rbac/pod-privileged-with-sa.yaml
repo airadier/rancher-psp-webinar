@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sudo-test
+spec:
+  containers:
+  - image: alpine
+    name: alpine
+    stdin: true
+    tty: true
+    securityContext:
+      privileged: true
+  hostNetwork: true
+  hostPID: true
+  restartPolicy: Never
+  serviceAccountName: privileged-sa 
