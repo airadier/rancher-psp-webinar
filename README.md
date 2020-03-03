@@ -251,3 +251,14 @@ $ kubectl apply -f rolebinding-privileged.yaml
 And now our deployment should work
 
 ## Demo 04: Sysdig Secure
+
+* Login to Sysdig Secure (audit log needs to be enabled for the cluster)
+* Go to Policies -> Pod Security Policies
+* New simulation
+* Import 03_rbac/deploy-not-privileged.yaml
+* It should generate a minimal PSP
+* Change the PSP name to something meaningful
+* Choose "default" as namespace
+* Start Simulation
+* Now run `kubectl apply -f deploy-privileged.yaml`
+* After a few seconds, a new event should be triggered detecting the violation (the pod would violate the PSP)
