@@ -38,7 +38,7 @@ Folder: 02_psp_enabled
 
 Let's enable PSP
 
-In Rancher, we can use the UI, edit the cluster, and mask PSP enabled, default PSP *restricted*.
+In Rancher, we can use the UI, edit the cluster, and mark PSP enabled, default PSP *restricted*.
 
 For minikube we can do:
 
