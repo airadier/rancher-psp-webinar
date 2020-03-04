@@ -1,0 +1,38 @@
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  annotations:
+    serviceaccount.cluster.cattle.io/pod-security: restricted
+    serviceaccount.cluster.cattle.io/pod-security-version: "1960"
+  creationTimestamp: "2020-03-04T19:56:10Z"
+  labels:
+    cattle.io/creator: norman
+  name: restricted-psp
+  resourceVersion: "2686"
+  selfLink: /apis/policy/v1beta1/podsecuritypolicies/restricted-psp
+  uid: 40957380-1d44-4e43-9333-91610e3fc079
+spec:
+  allowPrivilegeEscalation: false
+  fsGroup:
+    ranges:
+    - max: 65535
+      min: 1
+    rule: MustRunAs
+  requiredDropCapabilities:
+  - ALL
+  runAsUser:
+    rule: RunAsAny
+  seLinux:
+    rule: RunAsAny
+  supplementalGroups:
+    ranges:
+    - max: 65535
+      min: 1
+    rule: MustRunAs
+  volumes:
+  - configMap
+  - emptyDir
+  - projected
+  - secret
+  - downwardAPI
+  - persistentVolumeClaim

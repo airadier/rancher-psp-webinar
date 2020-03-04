@@ -1,5 +1,11 @@
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: psp-test
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: privileged-sa
   namespace: psp-test
+---

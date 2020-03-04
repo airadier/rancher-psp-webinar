@@ -3,12 +3,7 @@
 ## 00 - Prepare permissive-binding
 
 ```
-kubectl create clusterrolebinding permissive-binding \
-  --clusterrole=cluster-admin \
-  --user=admin \
-  --user=kubelet \
-  --group=system:serviceaccounts \
-  --group=system:authenticated
+kubectl apply -f sa-privileged.yaml
 ```
 
 ## Demo 01: No PSP enabled - danger
@@ -16,9 +11,9 @@ kubectl create clusterrolebinding permissive-binding \
 Folder: 01_no_psp_enabled
 
 ```
-$ bat deploy-dangerouds-pod.yaml
-$ kubectl apply -f deploy-dangerouds-pod.yaml
-$ kubectl attach -ti deploy-dangerouds-deploy
+$ bat deploy-dangerous-pod.yaml
+$ kubectl apply -f deploy-dangerous-pod.yaml
+$ kubectl attach -ti deploy/dangerous-deploy
 ```
 
 We are in a container, but with our *own* mount namespace. `docker ps` does not work, but `ps -ef` or `ifconfig` show host PIDs and network interfaces, so we can do:
@@ -32,7 +27,7 @@ Now we are in the host as root. We can check /etc/kubernetes/manifests, docker p
 Let's delete the pod before going on:
 
 ```
-$ kubectl delete  -f deploy-dangerouds-pod.yaml --grace-period=0 --force=true
+$ kubectl delete  -f deploy-dangerous-pod.yaml --grace-period=0 --force=true
 ```
 
 ## Demo 02: Enable PSP + naive example
@@ -43,7 +38,7 @@ Folder: 02_psp_enabled
 
 Let's enable PSP
 
-In Rancher, we can use the UI
+In Rancher, we can use the UI, edit the cluster, and mask PSP enabled, default PSP *restricted*.
 
 For minikube we can do:
 
@@ -62,27 +57,13 @@ $ bat deploy-not-privileged.yaml
 $ kubectl apply -f deploy-not-privileged.yaml
 ```
 
-The pod cannot be created, check the deploy and the replicaset events to get the error:
+Will work out of the box, as we told rancher to enable PSP with restricted security policy, which allows non-privileged pods like this to run with no issues.
+
+You can check what is exactly in the default PSP with:
 
 ```
-$ kubectl describe deploy not-privileged-deploy
-...
-  Normal  ScalingReplicaSet  53s   deployment-controller  Scaled up replica set not-privileged-deploy-684696d5b5 to 1
-
-$ kubectl describe rs not-privileged-deploy-684696d5b5
-...
-  Warning  FailedCreate  16s (x15 over 98s)  replicaset-controller  Error creating: pods "not-privileged-deploy-684696d5b5-" is forbidden: no providers available to validate pod request
-
+$ kubectl get psp restricted-psp -o yaml
 ```
-
-The reason is we have not created any PSP yet, let's create one:
-
-```
-$ bat psp-restricted.yaml
-$ kubectl apply -f psp-restricted.yaml
-```
-
-Now if we wait a bit, the pod will be created (we can delete/create the deploy)
 
 ### Privileged pod
 
@@ -113,56 +94,24 @@ $ kubectl delete -f deploy-privileged.yaml
 
 ## Demo 03: PSPs with RBAC
 
-Folder: 03_rbac
+Folder: 02_psp_enabled
 
-The previous example was naive, not a complete example, because we have this permissive-binding in place:
-
-```
-$ kubectl describe clusterrolebinding permissive-binding
-Name:         permissive-binding
-Labels:       <none>
-Annotations:  <none>
-Role:
-  Kind:  ClusterRole
-  Name:  cluster-admin
-Subjects:
-  Kind   Name                    Namespace
-  ----   ----                    ---------
-  User   admin
-  User   kubelet
-  Group  system:authenticated
-  Group  system:serviceaccounts
-```
-
-Let's remove it and see what happens:
+Let's create a new namespace now, instead of using default, and deploy the same pod in there:
 
 ```
-$ kubectl delete clusterrolebinding permissive-binding
+$ kubectl create ns psp-test
+$ kubectl -n psp-test apply -f deploy-not-privileged.yaml
 ```
 
-### Non-privileged pod
-
-Let's try to create a non-privileged pod after removing that permissive-binding:
+But it is failing:
 
 ```
-$ bat deploy-not-privileged.yaml
-$ kubectl apply -f deploy-not-privileged.yaml
-```
-
-Now the pod is not being created... let's describe the deployment and the replicaset:
-
-```
-$ k describe rs not-privileged-deploy-684696d5b5
-Name:           not-privileged-deploy-684696d5b5
-Namespace:      default
+$ kubectl -n psp-test describe rs
 ...
-Events:
-  Type     Reason        Age                  From                   Message
-  ----     ------        ----                 ----                   -------
-  Warning  FailedCreate  34s (x15 over 116s)  replicaset-controller  Error creating: pods "not-privileged-deploy-684696d5b5-" is forbidden: unable to validate against any pod security policy: []
+  Warning  FailedCreate  4s (x12 over 15s)  replicaset-controller  Error creating: pods "not-privileged-deploy-684696d5b5-" is forbidden: unable to validate against any pod security policy: []
 ```
 
-So even PSPs exist, the pod does not have permission to use it, so it cannot be validated.
+As we will learn later, namespaces that are managed under a Rancher project get some RoleBindings automatically created to make using PSPs easier. But as we created this namespace manually (as in any kubernetes cluster not managed with Rancher), we need to manually create it.
 
 Let's create a ClusterRole and a binding to allow USE verb on the the "restricted" PSP:
 
@@ -179,13 +128,13 @@ Trying to create a privileged deployment shouldn't work:
 
 ```
 $ bat deploy-privileged.yaml
-$ kubectl apply -f deploy-privileged.yaml
+$ kubectl -n psp-test apply -f deploy-privileged.yaml
 ```
 
 the deploy is unable to spawn the pod, and the replica-set that it created complains:
 
 ```
-$ kubectl describe rs privileged-deploy-7569b9969d
+$ kubectl -n psp-test describe rs privileged-deploy-7569b9969d
 Name:           privileged-deploy-7569b9969d
 Namespace:      default
 Selector:       app=privileged-deploy,pod-template-hash=7569b9969d
@@ -199,18 +148,16 @@ Events:
 
 The existing PSP (restricted) does not allow hostPID, hostNetwork or privileged.
 
-If we really want to allow this pod to run, we should create a specific PSP allowing the required privileges:
-
+Rancher already created a "default-psp" allowing privileged pods:
 ```
-$ bat psp-privileged.yaml
-$ kubectl apply -f psp-privileged.yaml
+$ kubectl get psp default-psp -o yaml
 ```
 
-and we are creating the corresponding ClusterRole and RoleBinding to provide access to the pod service account (privileged-sa)
+so we just need to create the corresponding ClusterRole and RoleBinding to provide access to the pod service account (privileged-sa)
 
 ```
 $ bat clusterrole-use-privileged.yaml
-$ kubectl apply -f clusterrole-use-privileged.yaml
+$ kubectl -n psp-test apply -f clusterrole-use-privileged.yaml
 ```
 And now our deployment should work.
 
@@ -227,6 +174,10 @@ And now our deployment should work.
 * Now run `kubectl apply -f deploy-privileged.yaml`
 * After a few seconds, a new event should be triggered detecting the violation (the pod would violate the PSP)
 
+
+# Demo 05: Rancher
+
+* When namespaces are created inside projects in Rancher, RoleBindings for the default PSP are created automatically
 
 ---------
 TMP notes

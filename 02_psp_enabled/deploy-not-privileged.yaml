@@ -4,7 +4,6 @@ metadata:
   labels:
     app: not-privileged-deploy
   name: not-privileged-deploy
-  namespace: psp-test
 spec:
   replicas: 1
   selector:
