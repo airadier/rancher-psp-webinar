@@ -4,6 +4,7 @@ metadata:
   labels:
     app: privileged-deploy
   name: privileged-deploy
+  namespace: psp-test
 spec:
   replicas: 1
   selector:
@@ -23,3 +24,4 @@ spec:
           privileged: true
       hostPID: true
       hostNetwork: true
+      serviceAccountName: privileged-sa

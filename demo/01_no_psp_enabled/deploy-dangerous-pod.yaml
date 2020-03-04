@@ -2,17 +2,18 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app: privileged-deploy
-  name: privileged-deploy
+    app: dangerous-deploy
+  name: dangerous-deploy
+  namespace: psp-test
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: privileged-deploy
+      app: dangerous-deploy
   template:
     metadata:
       labels:
-        app: privileged-deploy
+        app: dangerous-deploy
     spec:
       containers:
       - image: alpine
@@ -23,4 +24,3 @@ spec:
           privileged: true
       hostPID: true
       hostNetwork: true
-      serviceAccountName: privileged-sa
