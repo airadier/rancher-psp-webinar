@@ -6,6 +6,10 @@
 kubectl apply -f sa-privileged.yaml
 ```
 
+* Prepare one shell with Rancher kubeconfig and other shell with our Sysdig Secure demo environment.
+* One tab with Rancher
+* One tab with Sysdig Secure logged into demo environment
+
 ## Demo 01: No PSP enabled - danger
 
 Folder: 01_no_psp_enabled
@@ -82,8 +86,9 @@ $ kubectl describe rs privileged-deploy-7569b9969d
   Warning  FailedCreate  2s (x12 over 13s)  replicaset-controller  Error creating: pods "privileged-deploy-7569b9969d-" is forbidden: unable to validate against any pod security policy: [spec.securityContext.hostNetwork: Invalid value: true: Host network is not allowed to be used spec.securityContext.hostPID: Invalid value: true: Host PID is not allowed to be used spec.containers[0].securityContext.privileged: Invalid value: true: Privileged containers are not allowed]
 ```
 
-No existing PSPs allow for "hostPID", "hostNetwork" or "privileged"
+We can see that in Rancher UI under the cluster Workload section
 
+No existing PSPs allow for "hostPID", "hostNetwork" or "privileged"
 
 Let's remove the pods before moving on:
 
@@ -94,7 +99,7 @@ $ kubectl delete -f deploy-privileged.yaml
 
 ## Demo 03: PSPs with RBAC
 
-Folder: 02_psp_enabled
+Folder: 03_rbac
 
 Let's create a new namespace now, instead of using default, and deploy the same pod in there:
 
@@ -163,6 +168,8 @@ And now our deployment should work.
 
 ## Demo 04: Sysdig Secure
 
+Folder: 04_sysdig_secure for the deploy-privileged.yaml
+
 * Login to Sysdig Secure (audit log needs to be enabled for the cluster)
 * Go to Policies -> Pod Security Policies
 * New simulation
@@ -174,6 +181,11 @@ And now our deployment should work.
 * Now run `kubectl apply -f deploy-privileged.yaml`
 * After a few seconds, a new event should be triggered detecting the violation (the pod would violate the PSP)
 
+While we wait for the event to appear in Sysdig Secure:
+
+* One of the key features in here is we don't need to have PSPs enabled in our cluster.
+* Sysdig tests the impact of pod security policies through simulations, enabling teams to adjust misconfigurations before shifting to production.
+* A common scenario is having a "dev" cluster environment where we test the PSPs before deploying pods into production.
 
 # Demo 05: Rancher
 
